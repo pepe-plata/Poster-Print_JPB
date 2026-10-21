@@ -41,10 +41,10 @@ const state = {
   margins: { ...DEFAULT_MARGINS },
   keepAspect: true,
   imageLoaded: false,
-  // Evita reescrituras de inputs mientras se aplica un cambio desde afuera
-  _syncingImgInputs: false,
-  // Bloquea reentradas al aplicar valores manuales desde los inputs
-  _applyingImgInput: false
+  _applyingImgSize: false,
+  _refreshingImgInputs: false,
+  // Snapshot para no perder lo que el usuario tecleó al aplicar
+  _imgInputsSnapshot: null
 };
 
 // ---------- Refs DOM ----------
@@ -63,7 +63,7 @@ const els = {
   mTop: $('mTop'), mBottom: $('mBottom'), mLeft: $('mLeft'), mRight: $('mRight'),
   imageInput: $('imageInput'),
   imageActions: $('imageActions'),
-  imgWcm: $('imgWcm'), imgHcm: $('imgHcm'),
+  imgWcm: $('imgWcm'), imgHcm: $('imgHcm'), applyImgSizeBtn: $('applyImgSizeBtn'),
   rotateBtn: $('rotateBtn'), centerBtn: $('centerBtn'), fitBtn: $('fitBtn'),
   flipHBtn: $('flipHBtn'), flipVBtn: $('flipVBtn'),
   removeImgBtn: $('removeImgBtn'),
@@ -73,6 +73,8 @@ const els = {
   downloadPdfBtn: $('downloadPdfBtn'),
   pdfModal: $('pdfModal'),
   pdfPreview: $('pdfPreview'),
+  openPdfTabBtn: $('openPdfTabBtn'),
+  pdfMobileHint: $('pdfMobileHint'),
   closeModalBtn: $('closeModalBtn'),
   statusbar: $('statusbar'),
   installBtn: $('installBtn'),
@@ -86,45 +88,58 @@ const editor = new CanvasEditor(
   $('emptyState'),
   () => {
     updateSummary();
-    syncImageSizeInputs();
   }
 );
 
 let lastPdfBlob = null;
 let lastPdfUrl = null;
 
-// ---------- Sincronizar inputs manuales con el tamaño actual ----------
-// Reglas:
-//  - NUNCA reescribir un input que tiene el foco.
-//  - NUNCA reescribir mientras estamos aplicando un valor manual (_applyingImgInput).
-//  - Si force=true, forzar la escritura (usado cuando el cambio viene de una
-//    acción externa: rotar, mover, resize, cambiar layout, cargar/quitar imagen).
-function syncImageSizeInputs(force = false) {
+// ---------- Refresco de inputs de tamaño ----------
+function refreshImgSizeInputs(force = false) {
   if (!editor.image) {
     els.imgWcm.value = '';
     els.imgHcm.value = '';
     els.imgWcm.disabled = true;
     els.imgHcm.disabled = true;
+    els.applyImgSizeBtn.disabled = true;
     return;
   }
   els.imgWcm.disabled = false;
   els.imgHcm.disabled = false;
+  els.applyImgSizeBtn.disabled = false;
 
-  if (state._syncingImgInputs) return;
-  if (state._applyingImgInput && !force) return;
+  if (state._applyingImgSize && !force) return;
+  if (state._refreshingImgInputs) return;
+
   const sz = editor.getImageSizeCm();
   if (!sz) return;
 
-  const active = document.activeElement;
+  state._refreshingImgInputs = true;
+  els.imgWcm.value = Number(sz.w.toFixed(2));
+  els.imgHcm.value = Number(sz.h.toFixed(2));
+  state._refreshingImgInputs = false;
+}
 
-  state._syncingImgInputs = true;
-  if (force || active !== els.imgWcm) {
-    els.imgWcm.value = Number(sz.w.toFixed(2));
+// ---------- Aplicar tamaño manual (solo desde el botón "Aplicar" o Enter) ----------
+function applyImgSizeFromInputs() {
+  if (!editor.image || state._applyingImgSize) return;
+
+  // Tomar snapshot de lo que el usuario tecleó, sin importar el orden de eventos
+  const w = Number(els.imgWcm.value);
+  const h = Number(els.imgHcm.value);
+  if (!w || !h || w <= 0 || h <= 0) return;
+
+  state._applyingImgSize = true;
+  try {
+    // Pasamos ambos; el editor decide internamente si respeta keepAspect
+    // y cuál eje prioriza si hay que ajustar.
+    editor.setImageSizeCm(w, h);
+  } finally {
+    state._applyingImgSize = false;
   }
-  if (force || active !== els.imgHcm) {
-    els.imgHcm.value = Number(sz.h.toFixed(2));
-  }
-  state._syncingImgInputs = false;
+
+  // Refrescar con los valores reales resultantes
+  refreshImgSizeInputs(true);
 }
 
 // ---------- Thumbnails agrupados ----------
@@ -252,7 +267,7 @@ function refreshLayout() {
   updateSummary();
   updateStatusbar(grid, cell);
   updateButtons();
-  syncImageSizeInputs();
+  refreshImgSizeInputs();
 }
 
 function updateSummary() {
@@ -293,6 +308,7 @@ function updateButtons() {
   }
   els.imgWcm.disabled = !hasImg;
   els.imgHcm.disabled = !hasImg;
+  els.applyImgSizeBtn.disabled = !hasImg;
 }
 
 // ---------- Transformación de imagen para PDF ----------
@@ -351,15 +367,39 @@ async function onGeneratePdf() {
   }
 }
 
+function isMobile() {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+}
+
 function openPdfModal() {
   if (!lastPdfUrl) return;
-  els.pdfPreview.src = lastPdfUrl;
+
+  // En Android/Chrome móvil el iframe con blob PDF no se muestra bien.
+  // Mostramos el hint y ocultamos el iframe; en desktop usamos el iframe.
+  if (isMobile()) {
+    els.pdfPreview.classList.add('hidden');
+    els.pdfMobileHint.classList.remove('hidden');
+  } else {
+    els.pdfPreview.classList.remove('hidden');
+    els.pdfMobileHint.classList.add('hidden');
+    els.pdfPreview.src = lastPdfUrl;
+  }
+
   els.pdfModal.classList.remove('hidden');
 }
 
 function closePdfModal() {
   els.pdfModal.classList.add('hidden');
   els.pdfPreview.src = 'about:blank';
+}
+
+function openPdfInNewTab() {
+  if (!lastPdfUrl) return;
+  const w = window.open(lastPdfUrl, '_blank');
+  if (!w) {
+    // Si el navegador bloquea popups, forzar descarga
+    onDownloadPdf();
+  }
 }
 
 function onDownloadPdf() {
@@ -381,6 +421,14 @@ function onPosterSelectChange() {
     state.posterMode = 'custom';
     state.posterPresetId = null;
     els.customPosterBox.classList.remove('hidden');
+    // Hacer scroll hacia los inputs de ancho/alto del póster personalizado
+    requestAnimationFrame(() => {
+      try {
+        els.customPosterBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } catch (_) {
+        els.customPosterBox.scrollIntoView();
+      }
+    });
   } else {
     state.posterMode = 'preset';
     state.posterPresetId = val;
@@ -388,41 +436,6 @@ function onPosterSelectChange() {
   }
   updatePosterActive();
   refreshLayout();
-}
-
-// ---------- Aplicar cambios de tamaño manual de la imagen ----------
-// Se hace SOLO desde 'change' (blur/Enter), nunca desde 'input', para no
-// pisar lo que el usuario está escribiendo (crítico en Android).
-function applyImageWidth() {
-  if (!editor.image || state._applyingImgInput) return;
-  const w = Number(els.imgWcm.value);
-  if (!w || w <= 0) {
-    syncImageSizeInputs(true);
-    return;
-  }
-  state._applyingImgInput = true;
-  try {
-    editor.setImageSizeCm(w, null);
-  } finally {
-    state._applyingImgInput = false;
-  }
-  // NO reescribir aquí los inputs: solo se actualizarán cuando el usuario
-  // haga una acción externa (rotar, mover, resize, cambiar layout, etc.)
-}
-
-function applyImageHeight() {
-  if (!editor.image || state._applyingImgInput) return;
-  const h = Number(els.imgHcm.value);
-  if (!h || h <= 0) {
-    syncImageSizeInputs(true);
-    return;
-  }
-  state._applyingImgInput = true;
-  try {
-    editor.setImageSizeCm(null, h);
-  } finally {
-    state._applyingImgInput = false;
-  }
 }
 
 // ---------- Eventos de UI ----------
@@ -506,7 +519,7 @@ function bindEvents() {
       updateButtons();
       updateSummary();
       updateStatusbar(grid, cell);
-      syncImageSizeInputs(true);
+      refreshImgSizeInputs(true);
       els.imageInput.value = '';
     } catch (err) {
       console.error(err);
@@ -515,46 +528,63 @@ function bindEvents() {
   });
 
   // --- Inputs manuales de tamaño de la imagen ---
-  // input: no hacer nada (dejar teclear).
-  // change: aplicar el valor tal cual (sin reescribir el otro input).
-  // Enter (keydown): forzar blur para disparar change en teclados móviles.
+  // Estrategia definitiva para Android:
+  //  - 'input': NO hacer nada. Dejar teclear libremente.
+  //  - No depender de 'change' (Android lo dispara de forma impredecible
+  //    o lo sobrescribe con el modelo previo).
+  //  - Aplicar SOLO con el botón "Aplicar" o con Enter.
+  //  - Al aplicar, tomar los valores actuales de los inputs tal cual,
+  //    sin re-sincronizarlos antes.
   els.imgWcm.addEventListener('input', () => { /* intencionalmente vacío */ });
-  els.imgWcm.addEventListener('change', applyImageWidth);
-  els.imgWcm.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); els.imgWcm.blur(); }
-  });
-
   els.imgHcm.addEventListener('input', () => { /* intencionalmente vacío */ });
-  els.imgHcm.addEventListener('change', applyImageHeight);
-  els.imgHcm.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); els.imgHcm.blur(); }
+
+  const onEnterApply = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      els.applyImgSizeBtn.click();
+    }
+  };
+  els.imgWcm.addEventListener('keydown', onEnterApply);
+  els.imgHcm.addEventListener('keydown', onEnterApply);
+
+  els.applyImgSizeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    applyImgSizeFromInputs();
   });
 
+  // --- Acciones externas: sí refrescan los inputs ---
   els.rotateBtn.addEventListener('click', () => {
     editor.rotate90();
-    syncImageSizeInputs();
+    refreshImgSizeInputs(true);
   });
   els.centerBtn.addEventListener('click', () => {
     editor.centerImage();
-    syncImageSizeInputs();
+    refreshImgSizeInputs(true);
   });
   els.fitBtn.addEventListener('click', () => {
     editor.fitImage();
-    syncImageSizeInputs(true);
+    refreshImgSizeInputs(true);
   });
-  els.flipHBtn.addEventListener('click', () => editor.flipHorizontal());
-  els.flipVBtn.addEventListener('click', () => editor.flipVertical());
+  els.flipHBtn.addEventListener('click', () => {
+    editor.flipHorizontal();
+    refreshImgSizeInputs(true);
+  });
+  els.flipVBtn.addEventListener('click', () => {
+    editor.flipVertical();
+    refreshImgSizeInputs(true);
+  });
   els.removeImgBtn.addEventListener('click', () => {
     editor.removeImage();
     state.imageLoaded = false;
     updateButtons();
-    syncImageSizeInputs(true);
+    refreshImgSizeInputs(true);
     els.imageInput.value = '';
   });
 
   els.generatePdfBtn.addEventListener('click', onGeneratePdf);
   els.previewPdfBtn.addEventListener('click', openPdfModal);
   els.downloadPdfBtn.addEventListener('click', onDownloadPdf);
+  els.openPdfTabBtn.addEventListener('click', openPdfInNewTab);
   els.closeModalBtn.addEventListener('click', closePdfModal);
   els.pdfModal.addEventListener('click', (e) => {
     if (e.target === els.pdfModal) closePdfModal();
@@ -564,7 +594,7 @@ function bindEvents() {
     editor._resizeCanvas();
     if (editor.image) editor.fitImage();
     else editor.render();
-    syncImageSizeInputs();
+    refreshImgSizeInputs();
   }, 150));
 }
 
@@ -608,6 +638,7 @@ function init() {
   els.mRight.value = state.margins.right;
   els.imgWcm.disabled = true;
   els.imgHcm.disabled = true;
+  els.applyImgSizeBtn.disabled = true;
 
   if (state.posterMode === 'custom') {
     els.customPosterBox.classList.remove('hidden');
@@ -618,7 +649,7 @@ function init() {
   refreshLayout();
   updateButtons();
   updatePosterActive();
-  syncImageSizeInputs(true);
+  refreshImgSizeInputs(true);
 
   requestAnimationFrame(() => {
     if (editor.canvas.width < 2 || editor.canvas.height < 2) {

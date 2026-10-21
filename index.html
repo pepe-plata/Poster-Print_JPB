@@ -201,12 +201,13 @@
         <div class="row">
           <label class="field">
             <span>Ancho (cm)</span>
-            <input type="number" id="imgWcm" min="0.1" step="0.1" value="" disabled />
+            <input type="number" id="imgWcm" min="0.1" step="0.1" value="" disabled inputmode="decimal" />
           </label>
           <label class="field">
             <span>Alto (cm)</span>
-            <input type="number" id="imgHcm" min="0.1" step="0.1" value="" disabled />
+            <input type="number" id="imgHcm" min="0.1" step="0.1" value="" disabled inputmode="decimal" />
           </label>
+          <button type="button" class="btn btn-secondary" id="applyImgSizeBtn" disabled title="Aplicar tamaño">Aplicar</button>
         </div>
       </div>
 
@@ -245,9 +246,15 @@
   <div class="modal-inner">
     <div class="modal-head">
       <h3>Vista previa del PDF</h3>
-      <button class="btn btn-ghost" id="closeModalBtn">✕</button>
+      <div class="modal-head-actions">
+        <button class="btn btn-ghost" id="openPdfTabBtn" title="Abrir en pestaña">Abrir en pestaña</button>
+        <button class="btn btn-ghost" id="closeModalBtn">✕</button>
+      </div>
     </div>
     <iframe id="pdfPreview" class="pdf-frame"></iframe>
+    <div class="pdf-mobile-hint hidden" id="pdfMobileHint">
+      Si la vista previa no se muestra, usa <strong>Abrir en pestaña</strong> o descarga el PDF.
+    </div>
   </div>
 </div>
 

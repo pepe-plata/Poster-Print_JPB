@@ -1,0 +1,14 @@
+┌────────────────────────────────────────────────────────────┐
+│  TOPBAR (fija, 100% ancho)                                 │
+├──────────────┬─────────────────────────────────────────────┤
+│              │                                             │
+│  SIDEBAR     │  WORKSPACE (área de canvas)                 │
+│  (340 px)    │                                             │
+│  scrollable  │  - canvas centrado                          │
+│              │  - estado vacío si no hay imagen            │
+│              │                                             │
+│              ├─────────────────────────────────────────────┤
+│              │  STATUSBAR (chips de info)                  │
+└──────────────┴─────────────────────────────────────────────┘
+
+Overlays: SPLASH (2 s), MODAL (preview PDF)

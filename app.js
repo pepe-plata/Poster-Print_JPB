@@ -41,8 +41,10 @@ const state = {
   margins: { ...DEFAULT_MARGINS },
   keepAspect: true,
   imageLoaded: false,
-  // Para evitar reescrituras del input mientras el usuario escribe
-  _syncingImgInputs: false
+  // Evita reescrituras de inputs mientras se aplica un cambio desde afuera
+  _syncingImgInputs: false,
+  // Bloquea reentradas al aplicar valores manuales desde los inputs
+  _applyingImgInput: false
 };
 
 // ---------- Refs DOM ----------
@@ -92,9 +94,11 @@ let lastPdfBlob = null;
 let lastPdfUrl = null;
 
 // ---------- Sincronizar inputs manuales con el tamaño actual ----------
-// Regla: NUNCA reescribir un input que tenga el foco (para no pisar
-// lo que el usuario está escribiendo). Solo reescribir el que perdió foco
-// o ninguno si tiene foco.
+// Reglas:
+//  - NUNCA reescribir un input que tiene el foco.
+//  - NUNCA reescribir mientras estamos aplicando un valor manual (_applyingImgInput).
+//  - Si force=true, forzar la escritura (usado cuando el cambio viene de una
+//    acción externa: rotar, mover, resize, cambiar layout, cargar/quitar imagen).
 function syncImageSizeInputs(force = false) {
   if (!editor.image) {
     els.imgWcm.value = '';
@@ -107,6 +111,7 @@ function syncImageSizeInputs(force = false) {
   els.imgHcm.disabled = false;
 
   if (state._syncingImgInputs) return;
+  if (state._applyingImgInput && !force) return;
   const sz = editor.getImageSizeCm();
   if (!sz) return;
 
@@ -385,6 +390,41 @@ function onPosterSelectChange() {
   refreshLayout();
 }
 
+// ---------- Aplicar cambios de tamaño manual de la imagen ----------
+// Se hace SOLO desde 'change' (blur/Enter), nunca desde 'input', para no
+// pisar lo que el usuario está escribiendo (crítico en Android).
+function applyImageWidth() {
+  if (!editor.image || state._applyingImgInput) return;
+  const w = Number(els.imgWcm.value);
+  if (!w || w <= 0) {
+    syncImageSizeInputs(true);
+    return;
+  }
+  state._applyingImgInput = true;
+  try {
+    editor.setImageSizeCm(w, null);
+  } finally {
+    state._applyingImgInput = false;
+  }
+  // NO reescribir aquí los inputs: solo se actualizarán cuando el usuario
+  // haga una acción externa (rotar, mover, resize, cambiar layout, etc.)
+}
+
+function applyImageHeight() {
+  if (!editor.image || state._applyingImgInput) return;
+  const h = Number(els.imgHcm.value);
+  if (!h || h <= 0) {
+    syncImageSizeInputs(true);
+    return;
+  }
+  state._applyingImgInput = true;
+  try {
+    editor.setImageSizeCm(null, h);
+  } finally {
+    state._applyingImgInput = false;
+  }
+}
+
 // ---------- Eventos de UI ----------
 function bindEvents() {
   els.menuBtn.addEventListener('click', () => {
@@ -445,7 +485,7 @@ function bindEvents() {
     });
   }
 
-  // --- Imagen: carga ---
+  // --- Carga de imagen ---
   els.imageInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
@@ -475,41 +515,19 @@ function bindEvents() {
   });
 
   // --- Inputs manuales de tamaño de la imagen ---
-  // IMPORTANTE: aplicar solo en 'change' (blur/Enter) para no reescribir
-  // el input mientras el usuario escribe. Nunca reescribir el input con foco.
-  els.imgWcm.addEventListener('input', () => {
-    // No hacer nada aquí: dejar que el usuario termine de escribir.
-    // La aplicación real ocurre en 'change'.
-  });
-  els.imgWcm.addEventListener('change', () => {
-    if (state._syncingImgInputs || !editor.image) return;
-    const w = Number(els.imgWcm.value);
-    if (!w || w <= 0) {
-      // restaurar valor actual
-      syncImageSizeInputs(true);
-      return;
-    }
-    // Blur temporal para que el sync no pise el input
-    const hadFocus = document.activeElement === els.imgWcm;
-    if (hadFocus) els.imgWcm.blur();
-    editor.setImageSizeCm(w, null);
-    syncImageSizeInputs(true);
+  // input: no hacer nada (dejar teclear).
+  // change: aplicar el valor tal cual (sin reescribir el otro input).
+  // Enter (keydown): forzar blur para disparar change en teclados móviles.
+  els.imgWcm.addEventListener('input', () => { /* intencionalmente vacío */ });
+  els.imgWcm.addEventListener('change', applyImageWidth);
+  els.imgWcm.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); els.imgWcm.blur(); }
   });
 
-  els.imgHcm.addEventListener('input', () => {
-    // No hacer nada: se aplica en 'change'
-  });
-  els.imgHcm.addEventListener('change', () => {
-    if (state._syncingImgInputs || !editor.image) return;
-    const h = Number(els.imgHcm.value);
-    if (!h || h <= 0) {
-      syncImageSizeInputs(true);
-      return;
-    }
-    const hadFocus = document.activeElement === els.imgHcm;
-    if (hadFocus) els.imgHcm.blur();
-    editor.setImageSizeCm(null, h);
-    syncImageSizeInputs(true);
+  els.imgHcm.addEventListener('input', () => { /* intencionalmente vacío */ });
+  els.imgHcm.addEventListener('change', applyImageHeight);
+  els.imgHcm.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); els.imgHcm.blur(); }
   });
 
   els.rotateBtn.addEventListener('click', () => {
@@ -522,7 +540,7 @@ function bindEvents() {
   });
   els.fitBtn.addEventListener('click', () => {
     editor.fitImage();
-    syncImageSizeInputs();
+    syncImageSizeInputs(true);
   });
   els.flipHBtn.addEventListener('click', () => editor.flipHorizontal());
   els.flipVBtn.addEventListener('click', () => editor.flipVertical());

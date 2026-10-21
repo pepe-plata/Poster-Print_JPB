@@ -35,17 +35,27 @@ Aplicación web progresiva (PWA) para imprimir una imagen en varias hojas (tipo 
 ## Estructura del proyecto
 
 
-/
+
 ├── index.html # Estructura y UI
+
 ├── styles.css # Estilos (tema claro)
+
 ├── manifest.json # Metadatos PWA
+
 ├── sw.js # Service worker (caché offline)
+
 ├── app.js # Orquestación: estado, eventos, flujo
+
 ├── config.js # Constantes y tamaños predefinidos
+
 ├── tools.js # Utilidades (conversiones, cálculo de hojas)
+
 ├── canvas.js # Editor de canvas: render, mover, rotar, resize
+
 ├── pdf.js # Generación de PDF con jsPDF
+
 └── icons/
+
 └── icon-512.png # Ícono de la app (requerido)
 
 

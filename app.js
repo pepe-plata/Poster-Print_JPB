@@ -78,7 +78,8 @@ const els = {
   closeModalBtn: $('closeModalBtn'),
   statusbar: $('statusbar'),
   installBtn: $('installBtn'),
-  splash: $('splash')
+  splash: $('splash'),
+  toast: $('toast')
 };
 
 // ---------- Editor de canvas ----------
@@ -93,6 +94,22 @@ const editor = new CanvasEditor(
 
 let lastPdfBlob = null;
 let lastPdfUrl = null;
+
+// ---------- Toast ----------
+let toastTimer = null;
+function showToast(msg, ms = 3500) {
+  if (!els.toast) return;
+  els.toast.textContent = msg;
+  els.toast.classList.remove('hidden');
+  // Forzar reflow para reiniciar la animación
+  void els.toast.offsetWidth;
+  els.toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    els.toast.classList.remove('show');
+    setTimeout(() => els.toast.classList.add('hidden'), 300);
+  }, ms);
+}
 
 // ---------- Refresco de inputs de tamaño ----------
 function refreshImgSizeInputs(force = false) {
@@ -397,15 +414,27 @@ function closePdfModal() {
 function openPdfInNewTab() {
   if (!lastPdfUrl) return;
   const w = window.open(lastPdfUrl, '_blank');
-  if (!w) onDownloadPdf();
+  if (!w) {
+    onDownloadPdf();
+    showToast('No se pudo abrir la pestaña. Se descargó el PDF.');
+    closePdfModal();
+    return;
+  }
+  // Cerrar modal tras abrir
+  closePdfModal();
+  if (isMobile()) {
+    showToast('PDF abierto. Si no ves la barra de direcciones, usa Guardar PDF y ábrelo desde Archivos.');
+  } else {
+    showToast('PDF abierto en nueva pestaña.');
+  }
 }
 
 /**
  * Guardar PDF:
- * - En desktop con File System Access API (Chrome/Edge): muestra el
- *   diálogo nativo "Guardar como" con selección de carpeta y nombre.
- * - En Android y navegadores sin la API: dispara la descarga del PDF
- *   (el sistema lo guarda en Descargas, sin diálogo de carpeta).
+ * - En Android y desktop Chromium: muestra el diálogo nativo "Guardar como"
+ *   (Storage Access Framework en Android, File System Access API en desktop).
+ * - Fallback: descarga directa.
+ * Al terminar con éxito, cierra el modal y muestra un toast informativo.
  */
 async function savePdf() {
   if (!lastPdfBlob) return;
@@ -413,7 +442,7 @@ async function savePdf() {
   const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
   const filename = `poster-${ts}.pdf`;
 
-  // Intentar el diálogo nativo (solo desktop Chromium)
+  // Intentar el diálogo nativo
   if (typeof window.showSaveFilePicker === 'function') {
     try {
       const handle = await window.showSaveFilePicker({
@@ -426,23 +455,36 @@ async function savePdf() {
       const writable = await handle.createWritable();
       await writable.write(lastPdfBlob);
       await writable.close();
+
+      closePdfModal();
+      if (isMobile()) {
+        showToast('PDF guardado. Ábrelo desde la app Archivos para imprimirlo o compartirlo.', 5000);
+      } else {
+        showToast('PDF guardado correctamente.', 4000);
+      }
       return;
     } catch (err) {
-      // Si el usuario canceló, no hacer nada
+      // Cancelado por el usuario
       if (err && err.name === 'AbortError') return;
-      // Si falló por otra razón, caer a descarga
       console.warn('showSaveFilePicker falló, usando descarga:', err);
     }
   }
 
-  // Fallback: descarga directa (Android y navegadores sin la API)
+  // Fallback: descarga directa
   downloadBlob(lastPdfBlob, filename);
+  closePdfModal();
+  if (isMobile()) {
+    showToast('Descargando PDF. Revisa la barra de notificaciones o la carpeta Descargas.', 5000);
+  } else {
+    showToast('Descargando PDF…', 3500);
+  }
 }
 
 function onDownloadPdf() {
   if (lastPdfBlob) {
     const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
     downloadBlob(lastPdfBlob, `poster-${ts}.pdf`);
+    showToast('Descargando PDF…', 3500);
   }
 }
 
@@ -479,8 +521,6 @@ function onPosterSelectChange() {
 }
 
 // ---------- Helpers de edición de tamaño de imagen ----------
-const imgSizeInputs = () => [els.imgWcm, els.imgHcm, els.applyImgSizeBtn];
-
 function isInsideImgSizeZone(el) {
   return !!el && (
     el === els.imgWcm ||

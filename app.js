@@ -73,7 +73,7 @@ const els = {
   pdfModal: $('pdfModal'),
   pdfPreview: $('pdfPreview'),
   openPdfTabBtn: $('openPdfTabBtn'),
-  printPdfBtn: $('printPdfBtn'),
+  savePdfBtn: $('savePdfBtn'),
   pdfMobileHint: $('pdfMobileHint'),
   closeModalBtn: $('closeModalBtn'),
   statusbar: $('statusbar'),
@@ -401,35 +401,42 @@ function openPdfInNewTab() {
 }
 
 /**
- * Abre el PDF en una nueva pestaña y dispara el diálogo de impresión.
- * Algunos navegadores no permiten invocar print() sobre una pestaña
- * abierta con window.open si el PDF es un blob; en ese caso caemos a
- * descargar el PDF.
+ * Guardar PDF:
+ * - En desktop con File System Access API (Chrome/Edge): muestra el
+ *   diálogo nativo "Guardar como" con selección de carpeta y nombre.
+ * - En Android y navegadores sin la API: dispara la descarga del PDF
+ *   (el sistema lo guarda en Descargas, sin diálogo de carpeta).
  */
-function printPdf() {
-  if (!lastPdfUrl) return;
+async function savePdf() {
+  if (!lastPdfBlob) return;
 
-  // Abrimos la pestaña primero (aprovechando el gesto del usuario).
-  const win = window.open(lastPdfUrl, '_blank');
-  if (!win) {
-    // Popup bloqueado: descargar como fallback
-    onDownloadPdf();
-    return;
+  const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const filename = `poster-${ts}.pdf`;
+
+  // Intentar el diálogo nativo (solo desktop Chromium)
+  if (typeof window.showSaveFilePicker === 'function') {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{
+          description: 'PDF',
+          accept: { 'application/pdf': ['.pdf'] }
+        }]
+      });
+      const writable = await handle.createWritable();
+      await writable.write(lastPdfBlob);
+      await writable.close();
+      return;
+    } catch (err) {
+      // Si el usuario canceló, no hacer nada
+      if (err && err.name === 'AbortError') return;
+      // Si falló por otra razón, caer a descarga
+      console.warn('showSaveFilePicker falló, usando descarga:', err);
+    }
   }
 
-  // Intentar disparar print() en la nueva pestaña tras un pequeño delay
-  // para permitir que el visor de PDF del navegador se inicialice.
-  // Si el navegador no permite invocar print() sobre el visor de PDF,
-  // el usuario puede imprimir/guardar manualmente desde el visor.
-  setTimeout(() => {
-    try {
-      win.focus();
-      win.print();
-    } catch (_) {
-      // Algunos navegadores lanzan por seguridad. El visor del PDF
-      // ya está abierto y el usuario puede imprimir/guardar manualmente.
-    }
-  }, 400);
+  // Fallback: descarga directa (Android y navegadores sin la API)
+  downloadBlob(lastPdfBlob, filename);
 }
 
 function onDownloadPdf() {
@@ -457,7 +464,6 @@ function onPosterSelectChange() {
       } catch (_) {
         els.customPosterBox.scrollIntoView();
       }
-      // Foco en el ancho del póster después del scroll
       try {
         els.posterW.focus({ preventScroll: true });
         els.posterW.select();
@@ -500,18 +506,12 @@ function markImgEditingEndIfOutside(target) {
 function attachSelectAllOnFocus(input) {
   if (!input) return;
   input.addEventListener('focus', () => {
-    // setTimeout para que en móviles el foco se estabilice y la selección quede
     setTimeout(() => {
-      try {
-        input.select();
-      } catch (_) { /* noop */ }
+      try { input.select(); } catch (_) { /* noop */ }
     }, 0);
   });
-  // Fallback: en algunos navegadores móviles, el focus llega después del tap
   input.addEventListener('click', () => {
-    try {
-      input.select();
-    } catch (_) { /* noop */ }
+    try { input.select(); } catch (_) { /* noop */ }
   });
 }
 
@@ -519,7 +519,6 @@ function attachSelectAllOnFocus(input) {
 function bindEvents() {
   els.menuBtn.addEventListener('click', () => {
     els.layout.classList.toggle('sidebar-collapsed');
-    // Importante: solo re-renderizar. NO fit. La imagen conserva su tamaño.
     setTimeout(() => {
       editor._resizeCanvas();
       if (editor.image) {
@@ -550,8 +549,6 @@ function bindEvents() {
   els.keepAspect.addEventListener('change', () => {
     state.keepAspect = els.keepAspect.checked;
     editor.setKeepAspect(state.keepAspect);
-    // NO fit automático: el checkbox solo cambia el comportamiento en
-    // el próximo resize manual o cuando el usuario pulse "Ajustar".
   });
 
   els.paperSize.addEventListener('change', () => {
@@ -582,7 +579,6 @@ function bindEvents() {
     });
   }
 
-  // Seleccionar todo al enfocar inputs numéricos
   [
     els.posterW, els.posterH,
     els.paperW, els.paperH,
@@ -646,7 +642,6 @@ function bindEvents() {
     applyImgSizeFromInputs();
   });
 
-  // --- Acciones externas: sí refrescan los inputs ---
   els.rotateBtn.addEventListener('click', () => {
     editor.rotate90();
     refreshImgSizeInputs(true);
@@ -655,7 +650,6 @@ function bindEvents() {
     editor.centerImage();
     refreshImgSizeInputs(true);
   });
-  // Ajustar: único punto donde el usuario decide reencajar la imagen
   els.fitBtn.addEventListener('click', () => {
     editor.fitImage();
     refreshImgSizeInputs(true);
@@ -681,13 +675,12 @@ function bindEvents() {
   els.previewPdfBtn.addEventListener('click', openPdfModal);
   els.downloadPdfBtn.addEventListener('click', onDownloadPdf);
   els.openPdfTabBtn.addEventListener('click', openPdfInNewTab);
-  els.printPdfBtn.addEventListener('click', printPdf);
+  els.savePdfBtn.addEventListener('click', savePdf);
   els.closeModalBtn.addEventListener('click', closePdfModal);
   els.pdfModal.addEventListener('click', (e) => {
     if (e.target === els.pdfModal) closePdfModal();
   });
 
-  // Resize: solo recalcular canvas y re-renderizar. NO fit. NO refrescar inputs.
   window.addEventListener('resize', debounce(() => {
     editor._resizeCanvas();
     if (editor.image) {

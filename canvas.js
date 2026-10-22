@@ -23,7 +23,7 @@ export class CanvasEditor {
 
     this.scale = 1;
 
-    // Caja LOCAL (sin rotar). w/h = ancho/alto del contenido ANTES de rotar.
+    // Caja LOCAL (sin rotar).
     this.img = { x: 0, y: 0, w: 0, h: 0, rotation: 0, flipH: false, flipV: false };
 
     this.dragMode = null;
@@ -34,13 +34,21 @@ export class CanvasEditor {
     this.handles = [];
     this.labelEl = null;
 
-    this._pendingFit = false;
+    // Flag: indica si ya se hizo el "fit" inicial tras cargar la imagen.
+    // Mientras sea false, el primer setLayout() hará fit automático.
+    // Después, el fit solo ocurre si el usuario pulsa "Ajustar".
+    this._hasImageFitOnce = false;
 
     this._bindEvents();
     this._createOverlay();
     this._resizeCanvas();
   }
 
+  /**
+   * Actualiza el layout (columnas/filas/celda).
+   * NUNCA hace fit automático de la imagen ya cargada (salvo la primera vez,
+   * justo después de cargar, si aún no tenía tamaño).
+   */
   setLayout({ cols, rows, cellWcm, cellHcm }) {
     this.cols = Math.max(1, cols | 0);
     this.rows = Math.max(1, rows | 0);
@@ -51,27 +59,39 @@ export class CanvasEditor {
 
     this._resizeCanvas();
 
-    if (this.image) this.fitImage();
-    else this.render();
+    if (this.image) {
+      // Si la imagen aún no había sido ajustada (primera vez con layout válido),
+      // hacemos el fit inicial UNA vez. Después, jamás se auto-ajusta.
+      if (!this._hasImageFitOnce) {
+        this.fitImage();
+        this._hasImageFitOnce = true;
+      } else {
+        // Solo clampear posición y re-renderizar. NO cambiar el tamaño.
+        this._clampPosition();
+        this.render();
+        this._updateOverlay();
+      }
+    } else {
+      this.render();
+    }
   }
 
   setKeepAspect(v) {
     this.keepAspect = !!v;
   }
 
-  /** Resetea TODO el estado de la imagen */
   _resetImgState() {
     this.img = { x: 0, y: 0, w: 0, h: 0, rotation: 0, flipH: false, flipV: false };
     this.selected = false;
     this.dragMode = null;
     this.dragStart = null;
+    this._hasImageFitOnce = false;
   }
 
   async loadImageFile(file) {
     const url = URL.createObjectURL(file);
     try {
       const img = await loadImage(url);
-      // Reset duro de estado de imagen para evitar residuos de la anterior
       this._resetImgState();
 
       this.image = img;
@@ -81,6 +101,8 @@ export class CanvasEditor {
       if (this.canvas.width < 2 || this.canvas.height < 2) this._resizeCanvas();
 
       this.fitImage();
+      this._hasImageFitOnce = true;
+
       this.emptyState.classList.add('hidden');
       this.onImageChange();
     } finally {
@@ -114,16 +136,19 @@ export class CanvasEditor {
     return { x, y, w, h, cx, cy };
   }
 
+  /**
+   * Ajusta la imagen al canvas.
+   * Este método se llama:
+   *  - Una vez al cargar la imagen (primer fit).
+   *  - Cuando el usuario pulsa "Ajustar" (fitImage público).
+   * Nunca desde setLayout ni desde acciones externas.
+   */
   fitImage() {
     if (!this.image) return;
 
     const availW = this.canvas.width;
     const availH = this.canvas.height;
-    if (availW < 2 || availH < 2) {
-      this._pendingFit = true;
-      return;
-    }
-    this._pendingFit = false;
+    if (availW < 2 || availH < 2) return;
 
     const swap = this._isSwap();
     const natW = this.imgNaturalW;
@@ -146,13 +171,11 @@ export class CanvasEditor {
     this._clampPosition();
     this.render();
     this._updateOverlay();
+    this.onImageChange();
   }
 
   /**
    * Fija el tamaño VISUAL de la imagen en cm, manteniendo el centro.
-   * Si keepAspect está activo, el eje que el usuario no cambió se ajusta solo.
-   * @param {number|null} wCm  ancho visual en cm (null = no cambiar)
-   * @param {number|null} hCm  alto visual en cm (null = no cambiar)
    */
   setImageSizeCm(wCm, hCm) {
     if (!this.image) return;
@@ -166,13 +189,12 @@ export class CanvasEditor {
     if (hCm != null && hCm > 0) newVisH = hCm * s;
 
     if (this.keepAspect) {
-      const ar = vb.w / vb.h; // relación visual original
+      const ar = vb.w / vb.h;
       if (wCm != null && hCm == null) {
         newVisH = newVisW / ar;
       } else if (hCm != null && wCm == null) {
         newVisW = newVisH * ar;
       } else if (wCm != null && hCm != null) {
-        // ambos: ajustar el que cambió más respecto al actual
         const changeW = Math.abs(newVisW - vb.w);
         const changeH = Math.abs(newVisH - vb.h);
         if (changeW >= changeH) newVisH = newVisW / ar;
@@ -199,7 +221,6 @@ export class CanvasEditor {
     this.onImageChange();
   }
 
-  /** Devuelve el tamaño VISUAL de la imagen en cm */
   getImageSizeCm() {
     if (!this.image) return null;
     const vb = this._visualBounds();
@@ -516,10 +537,17 @@ export class CanvasEditor {
       }
     });
 
+    // Resize: solo recalcular canvas y re-renderizar/clampear.
+    // NO hacer fit automático (eso rompería el tamaño manual del usuario).
     window.addEventListener('resize', () => {
       this._resizeCanvas();
-      if (this.image) this.fitImage();
-      else this.render();
+      if (this.image) {
+        this._clampPosition();
+        this.render();
+        this._updateOverlay();
+      } else {
+        this.render();
+      }
     });
   }
 

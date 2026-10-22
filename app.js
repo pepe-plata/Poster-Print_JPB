@@ -43,10 +43,6 @@ const state = {
   imageLoaded: false,
   _applyingImgSize: false,
   _refreshingImgInputs: false,
-  // Rastreo explícito de edición de tamaño de imagen.
-  // Se activa al tocar cualquiera de los dos inputs (o el botón Aplicar)
-  // y NO se limpia por blur/focus internos del teclado Android.
-  // Solo se limpia cuando el usuario toca algo fuera de la zona.
   _imgEditingActive: false
 };
 
@@ -77,6 +73,7 @@ const els = {
   pdfModal: $('pdfModal'),
   pdfPreview: $('pdfPreview'),
   openPdfTabBtn: $('openPdfTabBtn'),
+  printPdfBtn: $('printPdfBtn'),
   pdfMobileHint: $('pdfMobileHint'),
   closeModalBtn: $('closeModalBtn'),
   statusbar: $('statusbar'),
@@ -98,11 +95,6 @@ let lastPdfBlob = null;
 let lastPdfUrl = null;
 
 // ---------- Refresco de inputs de tamaño ----------
-// Reglas:
-//  1. No hacer nada si no hay imagen.
-//  2. No hacer nada si el usuario está editando (_imgEditingActive).
-//  3. No hacer nada si estamos aplicando (_applyingImgSize) o ya refrescando.
-//  4. Si force=true y hay foco en un input, NO reescribir ese input.
 function refreshImgSizeInputs(force = false) {
   if (!editor.image) {
     els.imgWcm.value = '';
@@ -116,11 +108,8 @@ function refreshImgSizeInputs(force = false) {
   els.imgHcm.disabled = false;
   els.applyImgSizeBtn.disabled = false;
 
-  // Bloqueos duros
   if (state._applyingImgSize) return;
   if (state._refreshingImgInputs) return;
-
-  // Si el usuario está editando (bandera propia), no tocar nada.
   if (state._imgEditingActive && !force) return;
 
   const sz = editor.getImageSizeCm();
@@ -129,7 +118,6 @@ function refreshImgSizeInputs(force = false) {
   const active = document.activeElement;
 
   state._refreshingImgInputs = true;
-  // Nunca reescribir el input que tiene foco
   if (active !== els.imgWcm) {
     els.imgWcm.value = Number(sz.w.toFixed(2));
   }
@@ -154,7 +142,6 @@ function applyImgSizeFromInputs() {
     state._applyingImgSize = false;
   }
 
-  // Refrescar con los valores reales resultantes
   refreshImgSizeInputs(true);
 }
 
@@ -410,9 +397,39 @@ function closePdfModal() {
 function openPdfInNewTab() {
   if (!lastPdfUrl) return;
   const w = window.open(lastPdfUrl, '_blank');
-  if (!w) {
+  if (!w) onDownloadPdf();
+}
+
+/**
+ * Abre el PDF en una nueva pestaña y dispara el diálogo de impresión.
+ * Algunos navegadores no permiten invocar print() sobre una pestaña
+ * abierta con window.open si el PDF es un blob; en ese caso caemos a
+ * descargar el PDF.
+ */
+function printPdf() {
+  if (!lastPdfUrl) return;
+
+  // Abrimos la pestaña primero (aprovechando el gesto del usuario).
+  const win = window.open(lastPdfUrl, '_blank');
+  if (!win) {
+    // Popup bloqueado: descargar como fallback
     onDownloadPdf();
+    return;
   }
+
+  // Intentar disparar print() en la nueva pestaña tras un pequeño delay
+  // para permitir que el visor de PDF del navegador se inicialice.
+  // Si el navegador no permite invocar print() sobre el visor de PDF,
+  // el usuario puede imprimir/guardar manualmente desde el visor.
+  setTimeout(() => {
+    try {
+      win.focus();
+      win.print();
+    } catch (_) {
+      // Algunos navegadores lanzan por seguridad. El visor del PDF
+      // ya está abierto y el usuario puede imprimir/guardar manualmente.
+    }
+  }, 400);
 }
 
 function onDownloadPdf() {
@@ -440,6 +457,11 @@ function onPosterSelectChange() {
       } catch (_) {
         els.customPosterBox.scrollIntoView();
       }
+      // Foco en el ancho del póster después del scroll
+      try {
+        els.posterW.focus({ preventScroll: true });
+        els.posterW.select();
+      } catch (_) { /* noop */ }
     });
   } else {
     state.posterMode = 'preset';
@@ -474,14 +496,39 @@ function markImgEditingEndIfOutside(target) {
   state._imgEditingActive = false;
 }
 
+// ---------- Seleccionar todo al enfocar inputs numéricos ----------
+function attachSelectAllOnFocus(input) {
+  if (!input) return;
+  input.addEventListener('focus', () => {
+    // setTimeout para que en móviles el foco se estabilice y la selección quede
+    setTimeout(() => {
+      try {
+        input.select();
+      } catch (_) { /* noop */ }
+    }, 0);
+  });
+  // Fallback: en algunos navegadores móviles, el focus llega después del tap
+  input.addEventListener('click', () => {
+    try {
+      input.select();
+    } catch (_) { /* noop */ }
+  });
+}
+
 // ---------- Eventos de UI ----------
 function bindEvents() {
   els.menuBtn.addEventListener('click', () => {
     els.layout.classList.toggle('sidebar-collapsed');
+    // Importante: solo re-renderizar. NO fit. La imagen conserva su tamaño.
     setTimeout(() => {
       editor._resizeCanvas();
-      if (editor.image) editor.fitImage();
-      else editor.render();
+      if (editor.image) {
+        editor._clampPosition();
+        editor.render();
+        editor._updateOverlay();
+      } else {
+        editor.render();
+      }
     }, 220);
   });
 
@@ -503,7 +550,8 @@ function bindEvents() {
   els.keepAspect.addEventListener('change', () => {
     state.keepAspect = els.keepAspect.checked;
     editor.setKeepAspect(state.keepAspect);
-    if (editor.image) editor.fitImage();
+    // NO fit automático: el checkbox solo cambia el comportamiento en
+    // el próximo resize manual o cuando el usuario pulse "Ajustar".
   });
 
   els.paperSize.addEventListener('change', () => {
@@ -534,6 +582,14 @@ function bindEvents() {
     });
   }
 
+  // Seleccionar todo al enfocar inputs numéricos
+  [
+    els.posterW, els.posterH,
+    els.paperW, els.paperH,
+    els.mTop, els.mBottom, els.mLeft, els.mRight,
+    els.imgWcm, els.imgHcm
+  ].forEach(attachSelectAllOnFocus);
+
   // --- Carga de imagen ---
   els.imageInput.addEventListener('change', async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -549,7 +605,6 @@ function bindEvents() {
         cellWcm: cell.w,
         cellHcm: cell.h
       });
-      editor.fitImage();
       editor.render();
       editor._updateOverlay();
       updateButtons();
@@ -564,22 +619,15 @@ function bindEvents() {
   });
 
   // --- Inputs manuales de tamaño de la imagen ---
-  // El valor se aplica SOLO con "Aplicar" o Enter.
-  // Mientras el usuario tenga la zona activa (_imgEditingActive), ningún
-  // refresco reescribe los inputs.
   els.imgWcm.addEventListener('input', () => { /* dejar teclear */ });
   els.imgHcm.addEventListener('input', () => { /* dejar teclear */ });
 
-  // Marcar el inicio de edición al tocar/enfocar cualquier parte de la zona
   ['pointerdown', 'focusin', 'touchstart'].forEach((ev) => {
     els.imgWcm.addEventListener(ev, markImgEditingStart, { passive: true });
     els.imgHcm.addEventListener(ev, markImgEditingStart, { passive: true });
     els.applyImgSizeBtn.addEventListener(ev, markImgEditingStart, { passive: true });
   });
 
-  // Marcar fin de edición cuando el usuario toca FUERA de la zona.
-  // Usamos pointerdown a nivel documento para detectar el toque externo
-  // antes de que se pierda el foco (comportamiento más consistente en Android).
   document.addEventListener('pointerdown', (e) => {
     markImgEditingEndIfOutside(e.target);
   }, { passive: true });
@@ -599,7 +647,6 @@ function bindEvents() {
   });
 
   // --- Acciones externas: sí refrescan los inputs ---
-  // (pero refreshImgSizeInputs respeta _imgEditingActive y el foco)
   els.rotateBtn.addEventListener('click', () => {
     editor.rotate90();
     refreshImgSizeInputs(true);
@@ -608,6 +655,7 @@ function bindEvents() {
     editor.centerImage();
     refreshImgSizeInputs(true);
   });
+  // Ajustar: único punto donde el usuario decide reencajar la imagen
   els.fitBtn.addEventListener('click', () => {
     editor.fitImage();
     refreshImgSizeInputs(true);
@@ -633,18 +681,22 @@ function bindEvents() {
   els.previewPdfBtn.addEventListener('click', openPdfModal);
   els.downloadPdfBtn.addEventListener('click', onDownloadPdf);
   els.openPdfTabBtn.addEventListener('click', openPdfInNewTab);
+  els.printPdfBtn.addEventListener('click', printPdf);
   els.closeModalBtn.addEventListener('click', closePdfModal);
   els.pdfModal.addEventListener('click', (e) => {
     if (e.target === els.pdfModal) closePdfModal();
   });
 
-  // Resize: NO refrescar inputs aquí. Solo recalcular canvas e imagen.
-  // Si el teclado virtual se abre/cierra, esto evita pisar lo tecleado.
+  // Resize: solo recalcular canvas y re-renderizar. NO fit. NO refrescar inputs.
   window.addEventListener('resize', debounce(() => {
     editor._resizeCanvas();
-    if (editor.image) editor.fitImage();
-    else editor.render();
-    // Importante: NO llamar refreshImgSizeInputs() desde aquí
+    if (editor.image) {
+      editor._clampPosition();
+      editor.render();
+      editor._updateOverlay();
+    } else {
+      editor.render();
+    }
   }, 150));
 }
 

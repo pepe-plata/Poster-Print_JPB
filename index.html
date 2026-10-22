@@ -127,11 +127,11 @@
         <div class="row">
           <label class="field">
             <span>Ancho</span>
-            <input type="number" id="posterW" min="1" step="0.1" value="50" />
+            <input type="number" id="posterW" min="1" step="0.1" value="50" inputmode="decimal" />
           </label>
           <label class="field">
             <span>Alto</span>
-            <input type="number" id="posterH" min="1" step="0.1" value="70" />
+            <input type="number" id="posterH" min="1" step="0.1" value="70" inputmode="decimal" />
           </label>
           <label class="field">
             <span>Unidad</span>
@@ -156,11 +156,11 @@
         <div class="row">
           <label class="field">
             <span>Ancho</span>
-            <input type="number" id="paperW" min="1" step="0.1" value="21" />
+            <input type="number" id="paperW" min="1" step="0.1" value="21" inputmode="decimal" />
           </label>
           <label class="field">
             <span>Alto</span>
-            <input type="number" id="paperH" min="1" step="0.1" value="29.7" />
+            <input type="number" id="paperH" min="1" step="0.1" value="29.7" inputmode="decimal" />
           </label>
           <label class="field">
             <span>Unidad</span>
@@ -176,10 +176,10 @@
     <section class="panel">
       <h2>3. Márgenes</h2>
       <div class="margins-grid">
-        <label class="field"><span>Superior</span><input type="number" id="mTop" min="0" step="0.01" value="0.3" /></label>
-        <label class="field"><span>Inferior</span><input type="number" id="mBottom" min="0" step="0.01" value="0.51" /></label>
-        <label class="field"><span>Izquierdo</span><input type="number" id="mLeft" min="0" step="0.01" value="0.64" /></label>
-        <label class="field"><span>Derecho</span><input type="number" id="mRight" min="0" step="0.01" value="0.63" /></label>
+        <label class="field"><span>Superior</span><input type="number" id="mTop" min="0" step="0.01" value="0.3" inputmode="decimal" /></label>
+        <label class="field"><span>Inferior</span><input type="number" id="mBottom" min="0" step="0.01" value="0.51" inputmode="decimal" /></label>
+        <label class="field"><span>Izquierdo</span><input type="number" id="mLeft" min="0" step="0.01" value="0.64" inputmode="decimal" /></label>
+        <label class="field"><span>Derecho</span><input type="number" id="mRight" min="0" step="0.01" value="0.63" inputmode="decimal" /></label>
       </div>
       <p class="hint">Valores en cm.</p>
     </section>
@@ -248,12 +248,13 @@
       <h3>Vista previa del PDF</h3>
       <div class="modal-head-actions">
         <button class="btn btn-ghost" id="openPdfTabBtn" title="Abrir en pestaña">Abrir en pestaña</button>
+        <button class="btn btn-ghost" id="printPdfBtn" title="Imprimir / Guardar">Imprimir / Guardar</button>
         <button class="btn btn-ghost" id="closeModalBtn">✕</button>
       </div>
     </div>
     <iframe id="pdfPreview" class="pdf-frame"></iframe>
     <div class="pdf-mobile-hint hidden" id="pdfMobileHint">
-      Si la vista previa no se muestra, usa <strong>Abrir en pestaña</strong> o descarga el PDF.
+      Si la vista previa no se muestra, usa <strong>Abrir en pestaña</strong> o <strong>Imprimir / Guardar</strong>.
     </div>
   </div>
 </div>
